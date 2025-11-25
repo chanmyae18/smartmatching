@@ -49,11 +49,12 @@
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         
-        // Gemini API Config
+        // --- API INTEGRATION ---
+        const API_KEY = "AIzaSyD-fJ2ZKI6wavqxtBc8WuTKsNgDYcev6dk"; 
+        const ZAPIER_WEBHOOK_URL = "https://hooks.zapier.com/hooks/catch/25500291/uzvaqqg/";
+
         const GEMINI_MODEL = 'gemini-2.5-flash-preview-09-2025';
-        const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=`;
-        // NOTE: The API key is injected by the environment. Leave this empty string.
-        const API_KEY = ""; 
+        const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${API_KEY}`;
 
         let app, db, auth, storage;
         let isAuthReady = false; 
@@ -302,6 +303,61 @@
             loadingContent.classList.add('hidden');
         };
 
+        // --- GEMINI AI DESCRIPTION GENERATOR ---
+        window.generateDescription = async () => {
+            const btn = document.getElementById('ai-gen-btn');
+            const descField = document.getElementById('prop-desc');
+            
+            // Get values
+            const type = document.getElementById('prop-type').value;
+            const district = document.getElementById('prop-district').value;
+            const rent = document.getElementById('prop-rent').value;
+            const amenities = Array.from(document.querySelectorAll('input[name="amenity"]:checked')).map(cb => cb.value).join(', ');
+
+            if(!rent) {
+                window.showToast('Please enter a price first.', 'error');
+                return;
+            }
+
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Writing...';
+            btn.disabled = true;
+
+            const prompt = `Write a short, catchy, 2-sentence real estate listing description for a student ${type} in ${district}, Bangkok. Rent is ${rent} THB. Amenities: ${amenities}. Focus on student lifestyle.`;
+
+            try {
+                const response = await fetch(GEMINI_API_URL, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: prompt }] }]
+                    })
+                });
+
+                const data = await response.json();
+                const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "Enjoy student living in this amazing property!";
+                
+                // Typing effect
+                descField.value = '';
+                let i = 0;
+                const typeWriter = setInterval(() => {
+                    if (i < text.length) {
+                        descField.value += text.charAt(i);
+                        i++;
+                    } else {
+                        clearInterval(typeWriter);
+                        btn.innerHTML = '<i class="fas fa-magic"></i> Auto-Write with AI';
+                        btn.disabled = false;
+                    }
+                }, 20);
+
+            } catch (error) {
+                console.error(error);
+                descField.value = "Failed to generate description. Please try again.";
+                btn.innerHTML = '<i class="fas fa-magic"></i> Auto-Write with AI';
+                btn.disabled = false;
+            }
+        };
+
         // --- SUBMIT LISTING LOGIC ---
         window.openListingModal = () => document.getElementById('listing-modal').classList.remove('hidden');
         window.closeListingModal = () => document.getElementById('listing-modal').classList.add('hidden');
@@ -329,17 +385,27 @@
                     rent: parseInt(document.getElementById('prop-rent').value),
                     district: document.getElementById('prop-district').value,
                     distance: document.getElementById('prop-distance').value,
+                    description: document.getElementById('prop-desc').value, // Added Description
                     amenities: Array.from(document.querySelectorAll('input[name="amenity"]:checked')).map(cb => cb.value),
-                    createdAt: new Date()
+                    createdAt: new Date().toISOString(),
+                    ownerId: window.userId
                 };
 
                 // Fake Image Upload (In real app, upload to Storage here)
                 formData.imageUrl = PLACEHOLDER_IMG_URL;
                 
-                // Save to Firestore
+                // 1. Save to Firestore
                 await addDoc(collection(db, `artifacts/${appId}/users/${window.userId}/listings`), formData);
                 
-                window.showToast("Property Listed Successfully!", "success");
+                // 2. TRIGGER ZAPIER WEBHOOK
+                fetch(ZAPIER_WEBHOOK_URL, {
+                    method: 'POST',
+                    mode: 'no-cors', // Used to prevent CORS errors on client-side, though response is opaque
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(formData)
+                }).catch(err => console.warn("Zapier trigger warning:", err));
+
+                window.showToast("Property Listed & Zapier Triggered!", "success");
                 window.closeListingModal();
                 e.target.reset();
 
@@ -945,6 +1011,17 @@
                 <div>
                     <label class="block text-sm font-bold text-gray-700 mb-2">Distance to BTS/MRT (km)</label>
                     <input type="number" step="0.1" id="prop-distance" class="w-full p-3 bg-gray-50 rounded-xl border border-gray-200 focus:border-blue-500 outline-none">
+                </div>
+
+                <!-- NEW: AI DESCRIPTION FIELD -->
+                <div>
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="block text-sm font-bold text-gray-700">Description</label>
+                        <button type="button" id="ai-gen-btn" onclick="window.generateDescription()" class="text-xs font-bold text-purple-600 bg-purple-50 hover:bg-purple-100 px-3 py-1 rounded-full transition flex items-center gap-1 border border-purple-200">
+                            <i class="fas fa-magic"></i> Auto-Write with AI
+                        </button>
+                    </div>
+                    <textarea id="prop-desc" rows="3" class="w-full p-3 bg-gray-50 rounded-xl border border-gray-200 focus:border-blue-500 outline-none text-sm leading-relaxed" placeholder="Describe your property..."></textarea>
                 </div>
 
                 <div>
